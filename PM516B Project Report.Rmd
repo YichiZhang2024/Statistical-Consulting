@@ -34,7 +34,7 @@ library(survivalAnalysis)
 
 ## Executive Summary
 
-- 
+In exploring separate cox proportional hazards for each outcome of interest death and liver transplant we observed a protective factor for death when patients have a sequential education level. For liver transplant patients exposed to higher diabetes categories are at increased hazards and those that are males. Exploring death competitive risks regression controlling for the censored grouping of meld score in quartiles we see the similar effects as in our cox proportional hazards model with a protective factor of vulnerability on hazard risk.
 - 
 
 ## Background and Goals
@@ -60,7 +60,7 @@ data <- mutate(data,
                outcome = case_when((death == 1 & lt == 0) ~ 1, #death
                              (death == 0 & lt == 1) ~ 2, #liver transplant
                              (death == 0 & lt == 0) ~ 3),#nothing happened
-               outcome.f = factor(outcome, labels=c("Censored", "Dead", "Transplant")))
+               outcome.f = factor(outcome, labels=c("Dead", "Transplant", "Censored")))
 data$gender <- factor(data$gender)
 data$abo <- factor(data$abo)
 data$diab[data$diab == 998] <- NA
@@ -95,8 +95,6 @@ Using survival analysis models, we can obtain waitlist mortality to show the sur
 
 ### Death
 
-#### Cox Propotional Hazard Model
-
 ```{r Death Survival, echo=FALSE}
 surv_object <- Surv(time = data$mosexctoend, event = data$death)
 #head(surv_object, 20)
@@ -116,6 +114,10 @@ ggsurvplot(surv3, data = data, title = 'Survival Plot of Death Outcome by Meld P
 #summary(surv3, times = seq(0, 90, 1))
 # Survival table
 ```
+
+#### Cox Propotional Hazard Model
+
+In building our cox proportional hazard model for death we used forward selection methods to select covariates that increased concordance and did not violate our assumptions for proportional hazards. We ended with a final model with patient demographics such as `gender`, `abo` blood type, `diab` diabetic category, `ethcat`, highest `education` level, liver performance at enlist by `first_tumor_diam`, and stratifying by `meld.q4` the initial meld/peld score, along with a generated patient SES. We end with a model with an overall concordance of 0.5610 which is the strength of the model compared to $R^2$ in traditional linear regression models. In concluding from our model we find that patients enlisting to the waitlist with each 1 unit increase in `first_tumor_diam` their hazard risk of dying are 1.07. We also see a protective effect with each sequential level of education as the hazard risks decrease.
 
 ```{r Death Coxph Models, echo=FALSE}
 #Death
@@ -162,16 +164,11 @@ dev_table <- data[table$rowname, ]%>%
   kbl(caption = 'Outliers')%>%
   kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
 dev_table
-# ggcoxdiagnostics(cox, type = "dfbeta", sline = F)+
-#   geom_hline(data = bind_rows(tibble(val = abs(coefficients(cox)*.1),
-#                                      covariate = names(coefficients(cox))),
-#                               tibble(val = -abs(coefficients(cox)*.1),
-#                                      covariate = names(coefficients(cox)))),
-#              aes(yintercept = val), color = "orange")
-#^Displays every level of every covariate and is overwhelming to explore, should we week it?
 ```
 
 #### Competing Risk Analysis
+
+In our competing risks regression we see that there are protective effects in `education` and SES as each sequential level in both varibales decreases the hazard risk of dying on the waitlist.
 
 ```{r, echo=FALSE, cache = TRUE}
 death_hr_fit <- crr(ftime = data$mosexctoend,
