@@ -210,17 +210,15 @@ death_crr$Variable <- gsub("factor", "", death_crr$Variable)
 death_crr[!grepl("Missing", death_crr$Variable),]%>%
   kbl(caption = 'Death Competing Risks Regression')%>%
   kable_styling('striped', full_width = F, html_font = 'Cambria')
-```
-
-```{r}
 death_crr
 ```
+
 
 ### Transplant
 
 #### Cox Propotional Hazard Model
 
-We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. We use **tt** function to address non-proportional hazards of tumor category and vulnerability index and this model has a concordance of 0.534. 
+We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. MELD score is stratified in this model. We use **tt** function to address non-proportional hazards of tumor category and vulnerability index and this model has a concordance of 0.534. 
 
 ```{r, echo = FALSE}
 surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
@@ -253,28 +251,28 @@ cox_trans <- cox_as_data_frame(res.cox)%>%
 cox_trans
 ```
 
-```{r, echo = FALSE}
+```{r, include=FALSE, cache=TRUE}
 # Deviance Residuals ggplot
-ggcoxdiagnostics(res.cox, type = "deviance", sline = F, ox.scale = "observation.id")+
-  geom_hline(yintercept = 2, color = "orange") +
-  geom_hline(yintercept = -2, color = "orange")
-# Row selection of observation ouliers
-table_tran <- residuals(res.cox, type = "deviance")%>%
-  data.frame()%>%
-  tibble::rownames_to_column()%>%
-  filter(abs(.) > 2)%>%
-  arrange(desc(.))%>%
-  head(10)
-colnames(table_tran)[2] <- 'Deviance Residuals'
-table_tran%>%
-  kbl(caption = 'Observation Outliers')%>%
-  kable_styling('striped', full_width = F, html_font = 'Cambria')
-dev_table_tran <- data[table$rowname, ]%>%
-  select(gender, abo, ethcat, education, tumorcat4, vuln.q4, meld.q4,
-         outcome, mosexctoend)%>%
-  kbl(caption = 'Outliers')%>%
-  kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
-dev_table_tran
+# ggcoxdiagnostics(res.cox, type = "deviance", sline = F, ox.scale = "observation.id")+
+#   geom_hline(yintercept = 2, color = "orange") +
+#   geom_hline(yintercept = -2, color = "orange")
+# # # Row selection of observation ouliers
+# table_tran <- residuals(res.cox, type = "deviance")%>%
+#   data.frame()%>%
+#   tibble::rownames_to_column()%>%
+#   filter(abs(.) > 2)%>%
+#   arrange(desc(.))%>%
+#   head(10)
+# colnames(table_tran)[2] <- 'Deviance Residuals'
+# table_tran%>%
+#   kbl(caption = 'Observation Outliers')%>%
+#   kable_styling('striped', full_width = F, html_font = 'Cambria')
+# dev_table_tran <- data[table$rowname, ]%>%
+#   select(gender, abo, ethcat, education, tumorcat4, vuln.q4, meld.q4,
+#          outcome, mosexctoend)%>%
+#   kbl(caption = 'Outliers')%>%
+#   kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
+# dev_table_tran
 # ggcoxdiagnostics(cox, type = "dfbeta", sline = F)+
 #   geom_hline(data = bind_rows(tibble(val = abs(coefficients(cox)*.1),
 #                                      covariate = names(coefficients(cox))),
@@ -301,7 +299,19 @@ ggsurvplot(surv5.m, data = data, title = 'Survival Plot of Transplant Outcome by
 
 #### Competing Risk Analysis
 
-```{r,, echo = FALSE, cache=TRUE}
+Below is the cumulative incidence plot for each outcome, by dichotomized meld score. It suggests patients with higher vs. lower MELD scores are more likely to get a transplant early, but then lower vs. higher MELD scores are more likely to get a transplant after about 18 months. Again, the proportional odds assumption doesn't hold for MELD score. 
+
+```{r, echo = FALSE}
+plot(cuminc(data$mosexctoend, 
+            data$outcome.f,
+            data$meld.q2,
+            cencode=0),
+     color=c(1, 1, 2, 2, 3, 3))
+```
+
+Thus, we estimate different censoring distributions based on MELD score group in the competing risks regression model.
+
+```{r, echo = FALSE, cache=TRUE, warning = FALSE}
 scho.plot <- function(m) {
   require(magrittr)
   
@@ -331,8 +341,7 @@ result5b1 <- crr(data$mosexctoend,
                 ),
                 cengroup = data$meld.q4,
                 failcode=2, cencode=0)
-summary(result5b1)
-scho.plot(result5b1)
+# summary(result5b1)
 trans_crr <- mvcrrres(result5b1)
 rownames(trans_crr) <- NULL
 trans_crr <- trans_crr%>%
@@ -343,6 +352,7 @@ trans_crr$Variable <- gsub("factor", "", trans_crr$Variable)
 trans_crr[!grepl("Missing", trans_crr$Variable),]%>%
   kbl(caption = 'Transplant Competing Risks Regression')%>%
   kable_styling('striped', full_width = F, html_font = 'Cambria')
-trans_crr
+trans_crr 
+scho.plot(result5b1)
 ```
 
