@@ -35,7 +35,7 @@ library(survivalAnalysis)
 ## Executive Summary
 
 - 
-- 
+- Patients with higher social vulnerability scores are associated with lower hazards of getting liver transplant compared with patients with lower social vulnerability scores.
 
 ## Background and Goals
 
@@ -57,10 +57,11 @@ data <- mutate(data,
                meld = init_meld_peld_lab_score,
                meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
                meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T),
-               outcome = case_when((death == 1 & lt == 0) ~ 1, #death
-                             (death == 0 & lt == 1) ~ 2, #liver transplant
-                             (death == 0 & lt == 0) ~ 3),#nothing happened
-               outcome.f = factor(outcome, labels=c("Censored", "Dead", "Transplant")))
+               outcome = case_when(death==1 ~ 1,
+                                   lt==1 ~ 2,
+                                   TRUE ~ 0
+               ),#nothing happened
+               outcome.f = factor(outcome, labels=c("Dead", "Transplant", "Censored")))
 data$gender <- factor(data$gender)
 data$abo <- factor(data$abo)
 data$diab[data$diab == 998] <- NA
