@@ -40,18 +40,24 @@ This study was performed to measure if there were any disparities in patient liv
 
 With our data having recorded variables of initial start time for each patient when they first got on the waitlist, composite death date, and transplant date this depicts an observational cohort study design. The data enables a clinical trial where patients can be admitted to the study at any given time with these variables recorded for everyone, we are able to perform a survival analysis as each patient is followed from initial start to time of even, whether they received a liver transplant or died while on waitlist. The data is sampled from the USC Norris Cancer Center with patients having liver cancer and being admitted to the liver transplant waitlist. 
 
-Below is the demographics of patients displayed by the created social vulnerability index. Note the social vulnerability index was divided into quartiles.
+Below is the demographics of patients displayed by the created social vulnerability index. Note the social vulnerability index was divided into quantiles.
 
 ```{r, include = FALSE}
 # read in dataset
 data <- read_csv("sdoh-for Trevor.csv")
 data <- mutate(data,
                vuln = scale(pcs_wl),  
-  vuln.q2 = cut(vuln, quantile(vuln, probs=0:2/2), include.lowest=T),
-  vuln.q4 = cut(vuln, quantile(vuln, probs=0:4/4), include.lowest=T),
-  meld = init_meld_peld_lab_score,
-  meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
-  meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T))
+               vuln.q2 = cut(vuln, quantile(vuln, probs=0:2/2), include.lowest=T),
+               vuln.q4 = cut(vuln, quantile(vuln, probs=0:4/4), include.lowest=T),
+               meld = init_meld_peld_lab_score,
+               meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
+               meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T),
+               event = case_when(
+                 death==1 ~ 1,
+                 lt==1 ~ 2,
+                 TRUE ~ 0
+               ),
+               event.f = factor(event, labels=c("Censored", "Dead", "Transplant")),)
 ```
 
 ```{r, echo = FALSE}
@@ -84,13 +90,84 @@ Using survival analysis models, we can obtain waitlist mortality to show the sur
 
 #### Cox Propotional Hazard Model
 
+We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. Therefore, our final model contains, and this model has a concordance of . 
+
+```{r}
+surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
+cox3.m <- coxph(surv_trans ~ diab + gender + tumorcat4
+                + vuln.q4 + strata(meld.q4), data = data)
+summary(cox3.m)
+res.cox <- coxph(Surv(time = data$mosexctoend, event = data$lt) ~ diab + gender + tumorcat4
+                 + tt(vuln.q4) + strata(meld.q4),
+                 data = data,
+                 tt = 
+                   function(vuln.q4,mosextoend, ...){
+                     mtrx <- model.matrix(~vuln.q4)[,-1]
+                     mtrx * mosextoend
+                   }
+)
+res.cox1 <- coxph(Surv(time = data$mosexctoend, event = data$lt) ~ diab + gender + tumorcat4
+                 + tt(vuln) + strata(meld.q4),
+                 data = data,
+                 tt = 
+                   function(vuln.q4,mosextoend, ...){
+                     vuln.q4 * mosextoend
+                   }
+)
+test.ph <- cox.zph(res.cox)
+test.ph
+
+spl_data <-
+  data %>% 
+  timeSplitter(by = 5,
+               event_var = "event",
+               event_start_status = "Alive",
+               time_var = "mosextoend",
+              )
+
+interval_model <-
+  update(regular_model, 
+         Surv(Start_time, Stop_time, status == "Died from melanoma") ~ .,
+         data = spl_melanoma)
+
+summary(interval_model)
+```
+
+Below is the survival plot by quantiles of the social vulnerability index. The log-rank test suggests three is a statistically significant difference in survival curves between quantiles of social vulnerability index ($p < 0.0001$).
+
 ```{r, echo = FALSE, fig.align='center'}
 # surv_trans
-surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
 surv4.m <- survfit(surv_trans ~ vuln.q4, data=data)
 # summary(surv4.m)
 ggsurvplot(surv4.m, data = data, pval = T)
+survdiff(surv_trans ~ vuln.q4, data = data)
 ```
 
 
 #### Competing Risk Analysis
+
+```{r}
+result5b1 <- crr(data$mosexctoend, 
+                data$event, 
+                cbind(
+                 data$pcs_wl_norm,
+                  model.matrix(~ fct_explicit_na(factor(data$diab)))[,-1],
+                  model.matrix(~ fct_explicit_na(factor(data$tumorcat4)))[,-1]
+                ),
+                cengroup = data$meld.q4,
+                failcode=2, cencode=0)
+summary(result5b1)
+scho.plot(result5b1)
+result5b2 <- crr(data$mosexctoend, 
+                data$out, 
+                cov1 = cbind(
+                 data$pcs_wl_norm,
+                  model.matrix(~ fct_explicit_na(factor(data$diab)))[,-1],
+                  model.matrix(~ fct_explicit_na(factor(data$tumorcat4)))[,-1]
+                ),
+                 cov2 = data$meld.q4,
+                 tf = t,
+                failcode=2, cencode=0)
+scho.plot(result5b2)
+```
+
