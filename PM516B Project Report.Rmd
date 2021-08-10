@@ -34,8 +34,8 @@ library(survivalAnalysis)
 
 ## Executive Summary
 
-- One sentence for model assumption checking and its indication on conclusion
-- One sentence to answer research question
+- 
+- 
 
 ## Background and Goals
 
@@ -207,7 +207,7 @@ death_crr <- death_crr%>%
 death_crr$Variable <- gsub("fct_explicit_na", "", death_crr$Variable)
 death_crr$Variable <- gsub("[()]", "", death_crr$Variable)
 death_crr$Variable <- gsub("factor", "", death_crr$Variable)
-death_crr[!grepl("Missing", death_crr$Variable),]%>%
+death_crr <- death_crr[!grepl("Missing", death_crr$Variable),]%>%
   kbl(caption = 'Death Competing Risks Regression')%>%
   kable_styling('striped', full_width = F, html_font = 'Cambria')
 death_crr
@@ -218,7 +218,7 @@ death_crr
 
 #### Cox Propotional Hazard Model
 
-We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. MELD score is stratified in this model. We use **tt** function to address non-proportional hazards of tumor category and vulnerability index and this model has a concordance of 0.534. 
+We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. MELD score is stratified in this model. We use **tt** function to address non-proportional hazards of tumor category and vulnerability index and this model has a concordance of 0.534. The table shows the coefficients for covariates in the cox hazard model with bolded line indicating significant effect. For example, being male increases the hazard of transplant by a factor of 1.068, or 6.8%.
 
 ```{r, echo = FALSE}
 surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
@@ -292,7 +292,6 @@ ggsurvplot(surv4.m, data = data, title = 'Survival Plot of Transplant Outcome by
            xlab = 'Time (Months)', ylab = 'Survival Probability', pval = T)
 survdiff(surv_trans ~ vuln.q4, data = data)
 surv5.m <- survfit(surv_trans ~ meld.q4, data = data)
-surv5.m
 ggsurvplot(surv5.m, data = data, title = 'Survival Plot of Transplant Outcome by Meld Performance', xlab = 'Time (Months)', ylab = 'Survival Probability', pval = T)
 ```
 
@@ -309,7 +308,7 @@ plot(cuminc(data$mosexctoend,
      color=c(1, 1, 2, 2, 3, 3))
 ```
 
-Thus, we estimate different censoring distributions based on MELD score group in the competing risks regression model.
+Thus, we estimate different censoring distributions based on MELD score group in the competing risks regression model. The results suggests, patients with higher vulnerability index is associated with lower hazard of getting a transplant.
 
 ```{r, echo = FALSE, cache=TRUE, warning = FALSE}
 scho.plot <- function(m) {
@@ -342,6 +341,7 @@ result5b1 <- crr(data$mosexctoend,
                 cengroup = data$meld.q4,
                 failcode=2, cencode=0)
 # summary(result5b1)
+scho.plot(result5b1)
 trans_crr <- mvcrrres(result5b1)
 rownames(trans_crr) <- NULL
 trans_crr <- trans_crr%>%
@@ -353,6 +353,5 @@ trans_crr[!grepl("Missing", trans_crr$Variable),]%>%
   kbl(caption = 'Transplant Competing Risks Regression')%>%
   kable_styling('striped', full_width = F, html_font = 'Cambria')
 trans_crr 
-scho.plot(result5b1)
 ```
 
