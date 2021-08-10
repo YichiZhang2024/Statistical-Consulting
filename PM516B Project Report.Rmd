@@ -1,0 +1,96 @@
+---
+title: "PM 516B Project Report"
+author:
+- Brandyn Ruiz
+- Yichi Zhang
+date: "08/10/2021"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(psych)
+library(tidyverse)
+library(modelsummary)
+library(survival)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(survminer)
+library(mfp)
+library(cmprsk)
+library(kableExtra)
+```
+
+## Executive Summary
+
+- One sentence for model assumption checking and its indication on conclusion
+- One sentence to answer research question
+
+## Background and Goals
+
+This study was performed to measure if there were any disparities in patient liver transplants by a generated social vulnerability index and how long the patients survive the transplant. The patients in the dataset have liver cancer and have demographic information on age at the time of initial listing, gender, highest education level, blood type, and body mass index to name a few. The patients were measured by insurance, whether they had reliable transportation, social support, and their zip code of residence as metrics to derive the generated social vulnerability index as some patients on the live transplant waitlist are limited and do not have the necessary resources. The scope of our analysis would be to perform a survival analysis to explore the different times and lengths patients are living past their liver transplant and what demographics these patients make up stratifying by their generated social vulnerability index. As well as a competing risk analysis with those receiving a transplant and the risk of mortality while on the waitlist.
+
+## Study Design & Data
+
+With our data having recorded variables of initial start time for each patient when they first got on the waitlist, composite death date, and transplant date this depicts an observational cohort study design. The data enables a clinical trial where patients can be admitted to the study at any given time with these variables recorded for everyone, we are able to perform a survival analysis as each patient is followed from initial start to time of even, whether they received a liver transplant or died while on waitlist. The data is sampled from the USC Norris Cancer Center with patients having liver cancer and being admitted to the liver transplant waitlist. 
+
+Below is the demographics of patients displayed by the created social vulnerability index. Note the social vulnerability index was divided into quartiles.
+
+```{r, include = FALSE}
+# read in dataset
+data <- read_csv("sdoh-for Trevor.csv")
+data <- mutate(data,
+               vuln = scale(pcs_wl),  
+  vuln.q2 = cut(vuln, quantile(vuln, probs=0:2/2), include.lowest=T),
+  vuln.q4 = cut(vuln, quantile(vuln, probs=0:4/4), include.lowest=T),
+  meld = init_meld_peld_lab_score,
+  meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
+  meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T))
+```
+
+```{r, echo = FALSE}
+demo <- data %>%
+  select(gender, age, "weight" = wgt_kg_tcr, "height" = hgt_cm_tcr, "BMI" = bmi_tcr, "tumor number" = tumornum1, "tumor size" = first_tumor_diam,"tumor category" = tumorcat4, "social vulnerability index" = pcs_wl, "meld score" = meld, "waiting days" = dayswait_chron, mosexctoend, vuln.q4)
+# demographics table by group
+demo_tab <- datasummary_balance(all ~ vuln.q4, data = demo, dinm = FALSE, output = "data.frame")
+colnames(demo_tab) <- c(" "," ", rep(c("Mean", "SD"),4))
+demo_tab %>%
+  kable() %>%
+  add_header_above(c(" " = 2, "25%" = 2, "50%" = 2, "75%" = 2, "100%" = 2))%>%
+  kable_classic(full_width = F)%>%
+  kable_styling(font_size = 7)
+```
+
+
+## Statistical Methods
+
+Using survival analysis models, we can obtain waitlist mortality to show the survival rates of the patients as time progresses. We also use Cox Proportional Hazards model to see which variables contribute the most to the risk of mortality while waiting on the liver transplant waitlist. We replicate the same models for those that have received a liver transplant to observe which variables contribute risk and make the patients most critical in receiving a liver transplant.
+
+## Results
+
+### Death
+
+#### Cox Propotional Hazard Model
+
+#### Competing Risk Analysis
+
+### Transplant
+
+#### Cox Propotional Hazard Model
+
+```{r, echo = FALSE, fig.align='center'}
+# surv_trans
+surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
+surv4.m <- survfit(surv_trans ~ vuln.q4, data=data)
+# summary(surv4.m)
+ggsurvplot(surv4.m, data = data, pval = T)
+```
+
+
+#### Competing Risk Analysis
