@@ -1,0 +1,254 @@
+---
+title: "PM 516B Project Report"
+author:
+- Brandyn Ruiz
+- Yichi Zhang
+date: "08/10/2021"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(psych)
+library(tidyverse)
+library(modelsummary)
+library(survival)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(survminer)
+library(mfp)
+library(cmprsk)
+library(kableExtra)
+library(forcats)
+library(stringr)
+library(cowplot)
+library(survMisc)
+library(survivalAnalysis)
+
+```
+
+## Executive Summary
+
+- One sentence for model assumption checking and its indication on conclusion
+- One sentence to answer research question
+
+## Background and Goals
+
+This study was performed to measure if there were any disparities in patient liver transplants by a generated social vulnerability index and how long the patients survive the transplant. The patients in the dataset have liver cancer and have demographic information on age at the time of initial listing, gender, highest education level, blood type, and body mass index to name a few. The patients were measured by insurance, whether they had reliable transportation, social support, and their zip code of residence as metrics to derive the generated social vulnerability index as some patients on the live transplant waitlist are limited and do not have the necessary resources. The scope of our analysis would be to perform a survival analysis to explore the different times and lengths patients are living past their liver transplant and what demographics these patients make up stratifying by their generated social vulnerability index. As well as a competing risk analysis with those receiving a transplant and the risk of mortality while on the waitlist.
+
+## Study Design & Data
+
+With our data having recorded variables of initial start time for each patient when they first got on the waitlist, composite death date, and transplant date this depicts an observational cohort study design. The data enables a clinical trial where patients can be admitted to the study at any given time with these variables recorded for everyone, we are able to perform a survival analysis as each patient is followed from initial start to time of even, whether they received a liver transplant or died while on waitlist. The data is sampled from the USC Norris Cancer Center with patients having liver cancer and being admitted to the liver transplant waitlist. 
+
+Below is the demographics of patients displayed by the created social vulnerability index. Note the social vulnerability index was divided into quartiles.
+
+```{r, include = FALSE}
+# read in dataset
+data <- read_csv("sdoh-for Trevor.csv")
+data <- mutate(data,
+              outcome = case_when((death == 1 & lt == 0) ~ 1, #death
+                             (death == 0 & lt == 1) ~ 2, #liver transplant
+                             (death == 0 & lt == 0) ~ 3),#nothing happened
+               vuln = scale(pcs_wl),  
+  vuln.q2 = cut(vuln, quantile(vuln, probs=0:2/2), include.lowest=T),
+  vuln.q4 = cut(vuln, quantile(vuln, probs=0:4/4), include.lowest=T),
+  meld = init_meld_peld_lab_score,
+  meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
+  meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T))
+
+data$gender <- factor(data$gender)
+data$abo <- factor(data$abo)
+
+data$diab[data$diab == 998] <- NA
+data$diab <- factor(data$diab)
+
+data$ethcat <- factor(data$ethcat)
+data$insure_tcr <- factor(data$insure_tcr)
+
+data$education[data$education == 998] <- NA
+data$education <- factor(data$education)
+
+data$waitregion <- factor(data$waitregion)
+
+data$tumorcat4 <- factor(data$tumorcat4)
+
+```
+
+```{r, echo = FALSE}
+demo <- data %>%
+  select(gender, age, "weight" = wgt_kg_tcr, "height" = hgt_cm_tcr, "BMI" = bmi_tcr, "tumor number" = tumornum1, "tumor size" = first_tumor_diam,"tumor category" = tumorcat4, "social vulnerability index" = pcs_wl, "meld score" = meld, "waiting days" = dayswait_chron, mosexctoend, vuln.q4)
+# demographics table by group
+demo_tab <- datasummary_balance(all ~ vuln.q4, data = demo, dinm = FALSE, output = "data.frame")
+colnames(demo_tab) <- c(" "," ", rep(c("Mean", "SD"),4))
+demo_tab %>%
+  kable() %>%
+  add_header_above(c(" " = 2, "25%" = 2, "50%" = 2, "75%" = 2, "100%" = 2))%>%
+  kable_classic(full_width = F)%>%
+  kable_styling(font_size = 7)
+```
+
+
+## Statistical Methods
+
+Using survival analysis models, we can obtain waitlist mortality to show the survival rates of the patients as time progresses. We also use Cox Proportional Hazards model to see which variables contribute the most to the risk of mortality while waiting on the liver transplant waitlist. We replicate the same models for those that have received a liver transplant to observe which variables contribute risk and make the patients most critical in receiving a liver transplant.
+
+## Results
+
+### Death
+
+#### Cox Propotional Hazard Model
+```{r Death Survival}
+surv_object <- Surv(time = data$mosexctoend, event = data$death)
+
+#head(surv_object, 20)
+
+surv1 <- survfit(surv_object ~ 1, data = data)
+surv1
+#summary(surv1)
+ggsurvplot(surv1, data = data, title = 'Survival Plot of Death Outcome',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+
+surv2 <- survfit(surv_object ~ vuln.q4, data = data)
+surv2
+ggsurvplot(surv2, data = data, title = 'Survival Plot of Death Outcome by SVI',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+
+surv3 <- survfit(surv_object ~ meld.q4, data = data)
+surv3
+ggsurvplot(surv3, data = data, title = 'Survival Plot of Death Outcome by Meld Performance',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+
+#summary(surv3, times = seq(0, 90, 1))
+# Survival table
+```
+
+```{r Death Coxph Models}
+#Death
+cox <- coxph(surv_object ~ gender + abo + diab + ethcat + education +
+               vuln.q4 + strata(meld.q4) + first_tumor_diam + 
+               tumorcat4, data = data)
+#summary(cox)
+
+cox_death <- cox_as_data_frame(cox)%>%
+  select(factor.id, HR, Inv_Lower_CI, Inv_Upper_CI, p)%>%
+  rename(Variable = factor.id,
+         'Lower CI' = Inv_Lower_CI,
+         'Upper CI' = Inv_Upper_CI,
+         'p-value' = p)%>%
+  kbl(caption = 'Cox Proportional Hazards for Death Outcome')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')%>%
+  row_spec(c(10:11, 20, 23, 24, 26), bold = TRUE)
+
+cox_death
+```
+
+```{r}
+cox.zph(cox)
+
+ggcoxzph(cox.zph(cox))
+```
+
+```{r}
+# Deviance Residuals ggplot
+ggcoxdiagnostics(cox, type = "deviance", sline = F, ox.scale = "observation.id")+
+  geom_hline(yintercept = 2, color = "orange") +
+  geom_hline(yintercept = -2, color = "orange")
+
+# Row selection of observation ouliers
+table <- residuals(cox, type = "deviance")%>%
+  data.frame()%>%
+  tibble::rownames_to_column()%>%
+  filter(abs(.) > 2)%>%
+  arrange(desc(.))%>%
+  head(10)
+
+colnames(table)[2] <- 'Deviance Residuals'
+
+table%>%
+  kbl(caption = 'Observation Outliers')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+
+dev_table <- data[table$rowname, ]%>%
+  select(gender, abo, ethcat, education, tumorcat4, vuln.q4, meld.q4,
+         outcome, mosexctoend)%>%
+  kbl(caption = 'Outliers')%>%
+  kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
+
+dev_table
+
+# ggcoxdiagnostics(cox, type = "dfbeta", sline = F)+
+#   geom_hline(data = bind_rows(tibble(val = abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox))),
+#                               tibble(val = -abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox)))),
+#              aes(yintercept = val), color = "orange")
+
+#^Displays every level of every covariate and is overwhelming to explore, should we week it?
+```
+
+#### Competing Risk Analysis
+
+```{r}
+death_hr_fit <- crr(ftime = data$mosexctoend,
+              fstatus = data$outcome,
+              cov1 = model.matrix(~ fct_explicit_na(factor(gender)) + 
+                                    fct_explicit_na(factor(abo)) +
+                                    fct_explicit_na(factor(diab)) +
+                                    fct_explicit_na(factor(ethcat)) +
+                        z            fct_explicit_na(factor(education)) +
+                                    vuln.q4 +
+                                    first_tumor_diam +
+                                    fct_explicit_na(factor(tumorcat4)),
+                                  data = data)[,-1],
+  cengroup = data$meld.q4,
+              failcode = 2, cencode = 3)
+
+mvcrrres <- function(mod) {
+  names <- names(mod$coef)
+  hr.ci <- paste0(
+    round(summary(mod)$conf.int[, 1], 2), " (",
+    round(summary(mod)$conf.int[, 3], 2), ", ",
+    round(summary(mod)$conf.int[, 4], 2), ")"
+  )
+  p <- round(summary(mod)$coef[, 5], 3)
+  res <- data.frame(names, hr.ci, p, stringsAsFactors = FALSE)
+  res$p[res$p < 0.001] <- "<.001"
+  colnames(res) <- c("Variable", "HR (95% CI)", "p-value")
+  return(res)
+}
+
+death_crr <- mvcrrres(death_hr_fit)
+rownames(death_crr) <- NULL
+
+death_crr <- death_crr%>%
+  filter(`p-value` < 0.05)
+
+death_crr$Variable <- gsub("fct_explicit_na", "", death_crr$Variable)
+death_crr$Variable <- gsub("[()]", "", death_crr$Variable)
+death_crr$Variable <- gsub("factor", "", death_crr$Variable)
+
+death_crr[!grepl("Missing", death_crr$Variable),]%>%
+  kbl(caption = 'Death Competing Risks Regression')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+```
+
+### Transplant
+
+#### Cox Propotional Hazard Model
+
+```{r, echo = FALSE, fig.align='center'}
+# surv_trans
+surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
+surv4.m <- survfit(surv_trans ~ vuln.q4, data=data)
+# summary(surv4.m)
+ggsurvplot(surv4.m, data = data, pval = T)
+```
+
+
+#### Competing Risk Analysis
