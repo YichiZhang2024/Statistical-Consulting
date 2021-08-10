@@ -25,6 +25,11 @@ library(survminer)
 library(mfp)
 library(cmprsk)
 library(kableExtra)
+library(forcats)
+library(stringr)
+library(cowplot)
+library(survMisc)
+library(survivalAnalysis)
 ```
 
 ## Executive Summary
@@ -52,12 +57,20 @@ data <- mutate(data,
                meld = init_meld_peld_lab_score,
                meld.q2 = cut(meld, quantile(meld, probs=0:2/2), include.lowest=T),
                meld.q4 = cut(meld, quantile(meld, probs=0:4/4), include.lowest=T),
-               event = case_when(
-                 death==1 ~ 1,
-                 lt==1 ~ 2,
-                 TRUE ~ 0
-               ),
-               event.f = factor(event, labels=c("Censored", "Dead", "Transplant")),)
+               outcome = case_when((death == 1 & lt == 0) ~ 1, #death
+                             (death == 0 & lt == 1) ~ 2, #liver transplant
+                             (death == 0 & lt == 0) ~ 3),#nothing happened
+               outcome.f = factor(outcome, labels=c("Censored", "Dead", "Transplant")))
+data$gender <- factor(data$gender)
+data$abo <- factor(data$abo)
+data$diab[data$diab == 998] <- NA
+data$diab <- factor(data$diab)
+data$ethcat <- factor(data$ethcat)
+data$insure_tcr <- factor(data$insure_tcr)
+data$education[data$education == 998] <- NA
+data$education <- factor(data$education)
+data$waitregion <- factor(data$waitregion)
+data$tumorcat4 <- factor(data$tumorcat4)
 ```
 
 ```{r, echo = FALSE}
@@ -84,53 +97,191 @@ Using survival analysis models, we can obtain waitlist mortality to show the sur
 
 #### Cox Propotional Hazard Model
 
+```{r Death Survival, echo=FALSE}
+surv_object <- Surv(time = data$mosexctoend, event = data$death)
+#head(surv_object, 20)
+surv1 <- survfit(surv_object ~ 1, data = data)
+surv1
+#summary(surv1)
+ggsurvplot(surv1, data = data, title = 'Survival Plot of Death Outcome',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+surv2 <- survfit(surv_object ~ vuln.q4, data = data)
+surv2
+ggsurvplot(surv2, data = data, title = 'Survival Plot of Death Outcome by SVI',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+surv3 <- survfit(surv_object ~ meld.q4, data = data)
+surv3
+ggsurvplot(surv3, data = data, title = 'Survival Plot of Death Outcome by Meld Performance',
+           xlab = 'Time (Months)', ylab = 'Survival Probability')
+#summary(surv3, times = seq(0, 90, 1))
+# Survival table
+```
+
+```{r Death Coxph Models, echo=FALSE}
+#Death
+cox <- coxph(surv_object ~ gender + abo + diab + ethcat + education +
+               vuln.q4 + strata(meld.q4) + first_tumor_diam + 
+               tumorcat4, data = data)
+#summary(cox)
+cox_death <- cox_as_data_frame(cox)%>%
+  select(factor.id, HR, Inv_Lower_CI, Inv_Upper_CI, p)%>%
+  rename(Variable = factor.id,
+         'Lower CI' = Inv_Lower_CI,
+         'Upper CI' = Inv_Upper_CI,
+         'p-value' = p)%>%
+  kbl(caption = 'Cox Proportional Hazards for Death Outcome')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')%>%
+  row_spec(c(10:11, 20, 23, 24, 26), bold = TRUE)
+cox_death
+```
+
+```{r, echo=FALSE}
+cox.zph(cox)
+ggcoxzph(cox.zph(cox))
+```
+
+```{r, echo=FALSE}
+# Deviance Residuals ggplot
+ggcoxdiagnostics(cox, type = "deviance", sline = F, ox.scale = "observation.id")+
+  geom_hline(yintercept = 2, color = "orange") +
+  geom_hline(yintercept = -2, color = "orange")
+# Row selection of observation ouliers
+table <- residuals(cox, type = "deviance")%>%
+  data.frame()%>%
+  tibble::rownames_to_column()%>%
+  filter(abs(.) > 2)%>%
+  arrange(desc(.))%>%
+  head(10)
+colnames(table)[2] <- 'Deviance Residuals'
+table%>%
+  kbl(caption = 'Observation Outliers')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+dev_table <- data[table$rowname, ]%>%
+  select(gender, abo, ethcat, education, tumorcat4, vuln.q4, meld.q4,
+         outcome, mosexctoend)%>%
+  kbl(caption = 'Outliers')%>%
+  kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
+dev_table
+# ggcoxdiagnostics(cox, type = "dfbeta", sline = F)+
+#   geom_hline(data = bind_rows(tibble(val = abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox))),
+#                               tibble(val = -abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox)))),
+#              aes(yintercept = val), color = "orange")
+#^Displays every level of every covariate and is overwhelming to explore, should we week it?
+```
+
 #### Competing Risk Analysis
+
+```{r, echo=FALSE, cache = TRUE}
+death_hr_fit <- crr(ftime = data$mosexctoend,
+              fstatus = data$outcome,
+              cov1 = model.matrix(~ fct_explicit_na(factor(gender)) + 
+                                    fct_explicit_na(factor(abo)) +
+                                    fct_explicit_na(factor(diab)) +
+                                    fct_explicit_na(factor(ethcat)) +
+                                  fct_explicit_na(factor(education)) +
+                                    vuln.q4 +
+                                    first_tumor_diam +
+                                    fct_explicit_na(factor(tumorcat4)),
+                                  data = data)[,-1],
+  cengroup = data$meld.q4,
+              failcode = 2, cencode = 3)
+mvcrrres <- function(mod) {
+  names <- names(mod$coef)
+  hr.ci <- paste0(
+    round(summary(mod)$conf.int[, 1], 2), " (",
+    round(summary(mod)$conf.int[, 3], 2), ", ",
+    round(summary(mod)$conf.int[, 4], 2), ")"
+  )
+  p <- round(summary(mod)$coef[, 5], 3)
+  res <- data.frame(names, hr.ci, p, stringsAsFactors = FALSE)
+  res$p[res$p < 0.001] <- "<.001"
+  colnames(res) <- c("Variable", "HR (95% CI)", "p-value")
+  return(res)
+}
+death_crr <- mvcrrres(death_hr_fit)
+rownames(death_crr) <- NULL
+death_crr <- death_crr%>%
+  filter(`p-value` < 0.05)
+death_crr$Variable <- gsub("fct_explicit_na", "", death_crr$Variable)
+death_crr$Variable <- gsub("[()]", "", death_crr$Variable)
+death_crr$Variable <- gsub("factor", "", death_crr$Variable)
+death_crr[!grepl("Missing", death_crr$Variable),]%>%
+  kbl(caption = 'Death Competing Risks Regression')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+```
+
+```{r}
+death_crr
+```
 
 ### Transplant
 
 #### Cox Propotional Hazard Model
 
-We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. Therefore, our final model contains, and this model has a concordance of . 
+We start with the following set of covariates to build the cox proportional hazards model: gender, ethnicity, diabetes, BMI, tumor diameter, tumor number, tumor category, meld score and the created vulnerability index. However, after examining the proportional hazards assumption, we decided to remove tumor diameter and tumor number since they are significantly correlated with tumor category. We then removed ethnicity and BMI because they are not significantly related to overall survival and they violate the proportional hazards assumption. We use **tt** function to address non-proportional hazards of tumor category and vulnerability index and this model has a concordance of 0.534. 
 
-```{r}
+```{r, echo = FALSE}
 surv_trans <- Surv(time = data$mosexctoend, event = data$lt)
 cox3.m <- coxph(surv_trans ~ diab + gender + tumorcat4
-                + vuln.q4 + strata(meld.q4), data = data)
-summary(cox3.m)
-res.cox <- coxph(Surv(time = data$mosexctoend, event = data$lt) ~ diab + gender + tumorcat4
-                 + tt(vuln.q4) + strata(meld.q4),
-                 data = data,
-                 tt = 
-                   function(vuln.q4,mosextoend, ...){
-                     mtrx <- model.matrix(~vuln.q4)[,-1]
-                     mtrx * mosextoend
-                   }
-)
-res.cox1 <- coxph(Surv(time = data$mosexctoend, event = data$lt) ~ diab + gender + tumorcat4
-                 + tt(vuln) + strata(meld.q4),
-                 data = data,
-                 tt = 
-                   function(vuln.q4,mosextoend, ...){
-                     vuln.q4 * mosextoend
-                   }
-)
-test.ph <- cox.zph(res.cox)
+                + vuln + strata(meld.q4), data = data)
+test.ph <- cox.zph(cox3.m)
 test.ph
+res.cox <- coxph(Surv(time = data$mosexctoend, event = data$lt) ~ diab + gender + tt(tumorcat4) + tt(vuln.q4) + strata(meld.q4),
+                  data = data,
+                  tt = list(
+                    function(tumorcat4, mosextoend, ...){
+                      mtrx <- model.matrix(~tumorcat4)[,-1]
+                      mtrx * mosextoend
+                    },
+                    function(vuln.q4, mosextoend, ...){
+                      mtrx <- model.matrix(~vuln.q4)[,-1]
+                      mtrx * mosextoend
+                    }
+                  ))
+# summary(res.cox)
+cox_trans <- cox_as_data_frame(res.cox)%>%
+  select(factor.id, HR, Inv_Lower_CI, Inv_Upper_CI, p)%>%
+  rename(Variable = factor.id,
+         'Lower CI' = Inv_Lower_CI,
+         'Upper CI' = Inv_Upper_CI,
+         'p-value' = p)%>%
+  kbl(caption = 'Cox Proportional Hazards for Transplant Outcome')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')%>%
+  row_spec(c(2,3,5, 10, 11), bold = TRUE)
+cox_trans
+```
 
-spl_data <-
-  data %>% 
-  timeSplitter(by = 5,
-               event_var = "event",
-               event_start_status = "Alive",
-               time_var = "mosextoend",
-              )
-
-interval_model <-
-  update(regular_model, 
-         Surv(Start_time, Stop_time, status == "Died from melanoma") ~ .,
-         data = spl_melanoma)
-
-summary(interval_model)
+```{r, echo = FALSE}
+# Deviance Residuals ggplot
+ggcoxdiagnostics(res.cox, type = "deviance", sline = F, ox.scale = "observation.id")+
+  geom_hline(yintercept = 2, color = "orange") +
+  geom_hline(yintercept = -2, color = "orange")
+# Row selection of observation ouliers
+table_tran <- residuals(res.cox, type = "deviance")%>%
+  data.frame()%>%
+  tibble::rownames_to_column()%>%
+  filter(abs(.) > 2)%>%
+  arrange(desc(.))%>%
+  head(10)
+colnames(table_tran)[2] <- 'Deviance Residuals'
+table_tran%>%
+  kbl(caption = 'Observation Outliers')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+dev_table_tran <- data[table$rowname, ]%>%
+  select(gender, abo, ethcat, education, tumorcat4, vuln.q4, meld.q4,
+         outcome, mosexctoend)%>%
+  kbl(caption = 'Outliers')%>%
+  kable_styling('striped', full_width = FALSE, html_font = 'Cambria')
+dev_table_tran
+# ggcoxdiagnostics(cox, type = "dfbeta", sline = F)+
+#   geom_hline(data = bind_rows(tibble(val = abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox))),
+#                               tibble(val = -abs(coefficients(cox)*.1),
+#                                      covariate = names(coefficients(cox)))),
+#              aes(yintercept = val), color = "orange")
+#^Displays every level of every covariate and is overwhelming to explore, should we week it?
 ```
 
 Below is the survival plot by quantiles of the social vulnerability index. The log-rank test suggests three is a statistically significant difference in survival curves between quantiles of social vulnerability index ($p < 0.0001$).
@@ -139,18 +290,42 @@ Below is the survival plot by quantiles of the social vulnerability index. The l
 # surv_trans
 surv4.m <- survfit(surv_trans ~ vuln.q4, data=data)
 # summary(surv4.m)
-ggsurvplot(surv4.m, data = data, pval = T)
+ggsurvplot(surv4.m, data = data, title = 'Survival Plot of Transplant Outcome by SVI',
+           xlab = 'Time (Months)', ylab = 'Survival Probability', pval = T)
 survdiff(surv_trans ~ vuln.q4, data = data)
+surv5.m <- survfit(surv_trans ~ meld.q4, data = data)
+surv5.m
+ggsurvplot(surv5.m, data = data, title = 'Survival Plot of Transplant Outcome by Meld Performance', xlab = 'Time (Months)', ylab = 'Survival Probability', pval = T)
 ```
 
 
 #### Competing Risk Analysis
 
-```{r}
-result5b1 <- crr(data$mosexctoend, 
-                data$event, 
+```{r,, echo = FALSE, cache=TRUE}
+scho.plot <- function(m) {
+  require(magrittr)
+  
+tibble(m$uft) %>%
+  bind_cols(as_tibble(m$res)) %>%
+  set_colnames(
+    c("ft", names(m$coef))
+  ) %>%
+  pivot_longer(
+    cols = names(m$coef),
+    names_to = "var",
+    values_to = "resid"
+  ) %>%
+  ggplot(aes(x=ft, y=resid)) +
+  facet_wrap(~var) +
+  geom_point(alpha=.2) +
+  geom_smooth(color="firebrick")
+}
+# diab + gender + tumorcat4 + vuln
+result5b1 <- crr(data$mosexctoend,
+                data$outcome,
                 cbind(
-                 data$pcs_wl_norm,
+                  model.matrix(~ fct_explicit_na(factor(data$vuln.q4)))[,-1],
+                  model.matrix(~ fct_explicit_na(factor(data$gender)))[,-1],
                   model.matrix(~ fct_explicit_na(factor(data$diab)))[,-1],
                   model.matrix(~ fct_explicit_na(factor(data$tumorcat4)))[,-1]
                 ),
@@ -158,16 +333,16 @@ result5b1 <- crr(data$mosexctoend,
                 failcode=2, cencode=0)
 summary(result5b1)
 scho.plot(result5b1)
-result5b2 <- crr(data$mosexctoend, 
-                data$out, 
-                cov1 = cbind(
-                 data$pcs_wl_norm,
-                  model.matrix(~ fct_explicit_na(factor(data$diab)))[,-1],
-                  model.matrix(~ fct_explicit_na(factor(data$tumorcat4)))[,-1]
-                ),
-                 cov2 = data$meld.q4,
-                 tf = t,
-                failcode=2, cencode=0)
-scho.plot(result5b2)
+trans_crr <- mvcrrres(result5b1)
+rownames(trans_crr) <- NULL
+trans_crr <- trans_crr%>%
+  filter(`p-value` < 0.05)
+trans_crr$Variable <- gsub("fct_explicit_na", "", trans_crr$Variable)
+trans_crr$Variable <- gsub("[()]", "",trans_crr$Variable)
+trans_crr$Variable <- gsub("factor", "", trans_crr$Variable)
+trans_crr[!grepl("Missing", trans_crr$Variable),]%>%
+  kbl(caption = 'Transplant Competing Risks Regression')%>%
+  kable_styling('striped', full_width = F, html_font = 'Cambria')
+trans_crr
 ```
 
