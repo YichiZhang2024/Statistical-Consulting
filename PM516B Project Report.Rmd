@@ -34,7 +34,8 @@ library(survivalAnalysis)
 
 ## Executive Summary
 
-In exploring separate cox proportional hazards for each outcome of interest death and liver transplant we observed a protective factor for death when patients have a sequential education level. For liver transplant patients exposed to higher diabetes categories are at increased hazards and those that are males. Exploring death competitive risks regression controlling for the censored grouping of meld score in quartiles we see the similar effects as in our cox proportional hazards model with a protective factor of vulnerability on hazard risk.
+- In exploring separate cox proportional hazards for each outcome of interest death and liver transplant we observed a protective factor for death when patients have a sequential education level. For liver transplant patients exposed to higher diabetes categories are at increased hazards and those that are males. Exploring death competitive risks regression controlling for the censored grouping of meld score in quartiles we see the similar effects as in our cox proportional hazards model with a protective factor of vulnerability on hazard risk.
+- Patients with higher social vulnerability scores are associated with lower hazards of getting liver transplant compared with patients with lower social vulnerability scores.
 
 ## Background and Goals
 
